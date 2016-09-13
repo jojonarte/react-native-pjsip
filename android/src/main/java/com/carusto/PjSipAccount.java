@@ -15,11 +15,38 @@ public class PjSipAccount extends Account {
 
     private PjSipService service;
 
-    private int transportId;
+    private String name;
 
-    public PjSipAccount(PjSipService service, int transportId) {
+    private String username;
+
+    private String domain;
+
+    private String password;
+
+    private String proxy;
+
+    private String transport;
+
+    private String regServer;
+
+    private Integer regTimeout;
+
+    private Integer transportId;
+
+    public PjSipAccount(PjSipService service, int transportId,
+                        String name, String username, String domain, String password,
+                        String proxy, String transport, String regServer, Integer regTimeout) {
         this.service = service;
         this.transportId = transportId;
+
+        this.name = name;
+        this.username = username;
+        this.domain = domain;
+        this.password = password;
+        this.proxy = proxy;
+        this.transport = transport;
+        this.regServer = regServer;
+        this.regTimeout = regTimeout;
     }
 
     public PjSipService getService() {
@@ -28,6 +55,34 @@ public class PjSipAccount extends Account {
 
     public int getTransportId() {
         return transportId;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public String getDomain() {
+        return domain;
+    }
+
+    public String getProxy() {
+        return proxy;
+    }
+
+    public String getTransport() {
+        return transport;
+    }
+
+    public String getRegServer() {
+        return regServer;
+    }
+
+    public int getRegTimeout() {
+        return regTimeout;
     }
 
     @Override
@@ -48,14 +103,8 @@ public class PjSipAccount extends Account {
 
     @Override
     public void onIncomingCall(OnIncomingCallParam prm) {
-        Log.d(TAG, "onIncomingCall");
-        Log.d(TAG, "onIncomingCall getWholeMsg: " + prm.getRdata().getWholeMsg());
-        Log.d(TAG, "onIncomingCall getInfo: " + prm.getRdata().getInfo());
-        Log.d(TAG, "onIncomingCall getSrcAddress: " + prm.getRdata().getSrcAddress());
-
         PjSipCall call = new PjSipCall(this, prm.getCallId());
-
-        service.getEmitter().fireCallReceivedEvent(call);
+        service.handleCallReceived(call);
     }
 
     @Override
@@ -100,6 +149,14 @@ public class PjSipAccount extends Account {
 
             json.put("id", getId());
             json.put("uri", getInfo().getUri());
+            json.put("name", name);
+            json.put("username", username);
+            json.put("domain", domain);
+            json.put("password", password);
+            json.put("proxy", proxy);
+            json.put("transport", transport);
+            json.put("regServer", regServer);
+            json.put("regTimeout", regTimeout > 0 ? String.valueOf(regTimeout) : "");
             json.put("registration", registration);
 
             return json;
