@@ -2,15 +2,11 @@ package com.carusto;
 
 import android.content.Context;
 import android.content.Intent;
-import android.os.Bundle;
 import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 
 public class PjSipBroadcastEmiter {
 
@@ -22,9 +18,7 @@ public class PjSipBroadcastEmiter {
         this.context = context;
     }
 
-    public void fireStarted(Intent original, List<PjSipAccount> accounts, List<PjSipCall> calls) {
-        Log.d(TAG, "fireStarted");
-
+    public void fireStarted(Intent original, List<PjSipAccount> accounts, List<PjSipCall> calls, JSONObject settings, boolean connectivity) {
         try {
             JSONArray dataAccounts = new JSONArray();
             for (PjSipAccount account : accounts) {
@@ -39,6 +33,13 @@ public class PjSipBroadcastEmiter {
             JSONObject data = new JSONObject();
             data.put("accounts", dataAccounts);
             data.put("calls", dataCalls);
+            data.put("settings", settings);
+            data.put("connectivity", connectivity);
+
+            data.put("notificationIsFromForeground", original.getBooleanExtra("notificationIsFromForeground", false));
+            if (original.hasExtra("notificationCallId")) {
+                data.put("notificationCallId", original.getIntExtra("notificationCallId", -1));
+            }
 
             Intent intent = new Intent();
             intent.setAction(PjActions.EVENT_STARTED);
@@ -49,6 +50,15 @@ public class PjSipBroadcastEmiter {
         } catch (Exception e) {
             Log.e(TAG, "Failed to send ACCOUNT_CREATED event", e);
         }
+    }
+
+    public void fireIntentHandled(Intent original, JSONObject result) {
+        Intent intent = new Intent();
+        intent.setAction(PjActions.EVENT_HANDLED);
+        intent.putExtra("callback_id", original.getIntExtra("callback_id", -1));
+        intent.putExtra("data", result.toString());
+
+        context.sendBroadcast(intent);
     }
 
     public void fireIntentHandled(Intent original) {
@@ -85,18 +95,6 @@ public class PjSipBroadcastEmiter {
         context.sendBroadcast(intent);
     }
 
-    public void fireCallCreated(Intent original, PjSipCall call) {
-
-        // TODO: Remove this event, because makeCall function already returns call info.
-
-        Intent intent = new Intent();
-        intent.setAction(PjActions.EVENT_CALL_CREATED);
-        intent.putExtra("callback_id", original.getIntExtra("callback_id", -1));
-        intent.putExtra("data", call.toJsonString());
-
-        context.sendBroadcast(intent);
-    }
-
     public void fireCallReceivedEvent(PjSipCall call) {
         Intent intent = new Intent();
         intent.setAction(PjActions.EVENT_CALL_RECEIVED);
@@ -117,6 +115,22 @@ public class PjSipBroadcastEmiter {
         Intent intent = new Intent();
         intent.setAction(PjActions.EVENT_CALL_TERMINATED);
         intent.putExtra("data", call.toJsonString());
+
+        context.sendBroadcast(intent);
+    }
+
+    public void fireConnectivityChanged(boolean available) {
+        Intent intent = new Intent();
+        intent.setAction(PjActions.EVENT_CONNECTIVITY_CHANGED);
+        intent.putExtra("available", available);
+
+        context.sendBroadcast(intent);
+    }
+
+    public void fireCallScreenLocked(boolean lock) {
+        Intent intent = new Intent();
+        intent.setAction(PjActions.EVENT_CALL_SCREEN_LOCKED);
+        intent.putExtra("lock", lock);
 
         context.sendBroadcast(intent);
     }

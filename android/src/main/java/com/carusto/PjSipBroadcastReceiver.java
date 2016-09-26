@@ -43,9 +43,10 @@ public class PjSipBroadcastReceiver extends BroadcastReceiver {
         filter.addAction(PjActions.EVENT_ACCOUNT_CREATED);
         filter.addAction(PjActions.EVENT_REGISTRATION_CHANGED);
         filter.addAction(PjActions.EVENT_CALL_RECEIVED);
-        filter.addAction(PjActions.EVENT_CALL_CREATED);
         filter.addAction(PjActions.EVENT_CALL_CHANGED);
         filter.addAction(PjActions.EVENT_CALL_TERMINATED);
+        filter.addAction(PjActions.EVENT_CALL_SCREEN_LOCKED);
+        filter.addAction(PjActions.EVENT_CONNECTIVITY_CHANGED);
         filter.addAction(PjActions.EVENT_HANDLED);
 
         return filter;
@@ -53,9 +54,9 @@ public class PjSipBroadcastReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        Log.d(TAG, "onReceive: " + intent.getAction());
-
         String action = intent.getAction();
+
+        Log.d(TAG, "Received \""+ action +"\" response from service (" + ArgumentUtils.dumpIntentExtraParameters(intent) + ")");
 
         switch (action) {
             case PjActions.EVENT_STARTED:
@@ -75,6 +76,12 @@ public class PjSipBroadcastReceiver extends BroadcastReceiver {
                 break;
             case PjActions.EVENT_CALL_TERMINATED:
                 onCallTerminated(intent);
+                break;
+            case PjActions.EVENT_CALL_SCREEN_LOCKED:
+                onCallScreenLocked(intent);
+                break;
+            case PjActions.EVENT_CONNECTIVITY_CHANGED:
+                onConnectivityChanged(intent);
                 break;
             default:
                 onCallback(intent);
@@ -104,6 +111,16 @@ public class PjSipBroadcastReceiver extends BroadcastReceiver {
         String json = intent.getStringExtra("data");
         Object params = ArgumentUtils.fromJson(json);
         context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("pjSipCallTerminated", params);
+    }
+
+    private void onCallScreenLocked(Intent intent) {
+        boolean lock = intent.getBooleanExtra("lock", false);
+        context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("pjSipCallScreenLocked", lock);
+    }
+
+    private void onConnectivityChanged(Intent intent) {
+        boolean available = intent.getBooleanExtra("available", false);
+        context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("pjSipConnectivityChanged", available);
     }
 
     private void onCallback(Intent intent) {

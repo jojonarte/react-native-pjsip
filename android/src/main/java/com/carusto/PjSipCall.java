@@ -1,5 +1,7 @@
 package com.carusto;
 
+import android.content.Context;
+import android.media.AudioManager;
 import android.util.Log;
 import org.json.JSONObject;
 import org.pjsip.pjsua2.*;
@@ -9,6 +11,10 @@ public class PjSipCall extends Call {
     private static String TAG = "PjSipCall";
 
     private PjSipAccount account;
+
+    private boolean isHeld = false;
+
+    private boolean isMuted = false;
 
     public PjSipCall(PjSipAccount acc, int call_id) {
         super(acc, call_id);
@@ -24,262 +30,193 @@ public class PjSipCall extends Call {
         return account.getService();
     }
 
-    public void putOnHold() throws Exception {
+    public void hold() throws Exception {
+        if (isHeld) {
+            return;
+        }
+
+        isHeld = true;
+
+        // Emmit changes
+        getService().emmitCallUpdated(this);
+
+        // Send reinvite to server for hold
         setHold(new CallOpParam(true));
     }
 
-    public void releaseFromHold() throws Exception {
-        CallOpParam prm = new CallOpParam();
-        prm.setOptions(pjsua_call_flag.PJSUA_CALL_UNHOLD.swigValue());
+    public void unhold() throws Exception {
+        if (!isHeld) {
+            return;
+        }
 
-//        CallSetting opt = param.getOpt();
-//         opt.setFlag(pjsua_call_flag.PJSUA_CALL_UNHOLD.swigValue());  
+        isHeld = false;
+
+        // Emmit changes
+        getService().emmitCallUpdated(this);
+
+        // Send reinvite to server for release from hold
+        CallOpParam prm = new CallOpParam(true);
+        prm.getOpt().setFlag(1);
 
         reinvite(prm);
     }
 
-    @Override
-    public void onCallState(OnCallStateParam prm) {
-        try {
-            if (getInfo().getState() == pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED) {
-                getService().getEmitter().fireCallTerminated(this);
-                getService().evict(this);
-            } else {
-                getService().getEmitter().fireCallChanged(this);
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to handle call state event", e);
-        }
-    }
-
-    @Override
-    public void onCallTsxState(OnCallTsxStateParam prm) {
-        Log.d(TAG, "onCallTsxState");
-
-        super.onCallTsxState(prm);
-    }
-
-    @Override
-    public void onCallMediaState(OnCallMediaStateParam prm) {
-
-        CallInfo info;
-        try {
-            info = getInfo();
-        } catch (Exception exc) {
-            Log.w(TAG, "Error while getting call info", exc);
+    public void mute() throws Exception {
+        if (isMuted) {
             return;
         }
+
+        isMuted = true;
+        doMute(true);
+
+        // Emmit changes
+        getService().emmitCallUpdated(this);
+    }
+
+    public void unmute() throws Exception {
+        if (!isMuted) {
+            return;
+        }
+
+        isMuted = false;
+        doMute(false);
+
+        // Emmit changes
+        getService().emmitCallUpdated(this);
+    }
+
+    private void doMute(boolean mute) throws Exception {
+        CallInfo info = getInfo();
 
         for (int i = 0; i < info.getMedia().size(); i++) {
             Media media = getMedia(i);
             CallMediaInfo mediaInfo = info.getMedia().get(i);
 
-            if (mediaInfo.getType() == pjmedia_type.PJMEDIA_TYPE_AUDIO
-                    && media != null
-                    && mediaInfo.getStatus() == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
+            if (media != null &&
+                    mediaInfo.getType() == pjmedia_type.PJMEDIA_TYPE_AUDIO  &&
+                    mediaInfo.getStatus() == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
                 AudioMedia audioMedia = AudioMedia.typecastFromMedia(media);
 
-                // connect the call audio media to sound device
                 try {
-                    AudDevManager mgr = account.getService().getAudDevManager();
-
-                    try {
-                        audioMedia.adjustRxLevel((float) 1.5);
-                        audioMedia.adjustTxLevel((float) 1.5);
-                    } catch (Exception exc) {
-                        Log.e(TAG, "Error while adjusting levels", exc);
-                    }
-
-                    audioMedia.startTransmit(mgr.getPlaybackDevMedia());
-                    mgr.getCaptureDevMedia().startTransmit(audioMedia);
+                    audioMedia.adjustRxLevel((float) (mute ? 0 : 1));
                 } catch (Exception exc) {
-                    Log.e(TAG, "Error while connecting audio media to sound device", exc);
+                    Log.e(TAG, "Error while adjusting levels", exc);
                 }
-            }
-
-            if (mediaInfo.getType() == pjmedia_type.PJMEDIA_TYPE_VIDEO) {
-                Log.d(TAG, "Media video getIndex: " + mediaInfo.getIndex());
-                Log.d(TAG, "Media video getDir: " + mediaInfo.getDir());
-                Log.d(TAG, "Media video getType: " + mediaInfo.getType());
-                Log.d(TAG, "Media video getStatus: " + mediaInfo.getStatus());
-                Log.d(TAG, "Media video getVideoIncomingWindowId: " + mediaInfo.getVideoIncomingWindowId());
-                Log.d(TAG, "Media video getVideoCapDev: " + mediaInfo.getVideoCapDev());
-
-
             }
         }
     }
 
-    @Override
-    public void onCallSdpCreated(OnCallSdpCreatedParam prm) {
-        Log.d(TAG, "onCallSdpCreated");
+    public void redirect(String destination) throws Exception {
+        SipHeader contactHeader = new SipHeader();
+        contactHeader.setHName("Contact");
+        contactHeader.setHValue(destination);
 
-        super.onCallSdpCreated(prm);
+        SipHeaderVector contactHeaders = new SipHeaderVector();
+        contactHeaders.add(contactHeader);
+
+        SipTxOption tx = new SipTxOption();
+        tx.setHeaders(contactHeaders);
+
+        CallOpParam prm = new CallOpParam();
+        prm.setStatusCode(pjsip_status_code.PJSIP_SC_MOVED_TEMPORARILY);
+        prm.setTxOption(tx);
+
+        answer(prm);
     }
 
     @Override
-    public void onStreamCreated(OnStreamCreatedParam prm) {
-        Log.d(TAG, "onStreamCreated");
-
-        super.onStreamCreated(prm);
+    public void onCallState(OnCallStateParam prm) {
+        try {
+            getService().emmitCallStateChanged(this, prm);
+        } catch (Exception e) {
+            Log.e(TAG, "Exception for onCallState callback", e);
+        }
     }
 
     @Override
-    public void onStreamDestroyed(OnStreamDestroyedParam prm) {
-        Log.d(TAG, "onStreamDestroyed");
+    public void onCallMediaState(OnCallMediaStateParam prm) {
+        try {
+            CallInfo info = getInfo();
 
-        super.onStreamDestroyed(prm);
-    }
+            for (int i = 0; i < info.getMedia().size(); i++) {
+                Media media = getMedia(i);
+                CallMediaInfo mediaInfo = info.getMedia().get(i);
 
-    @Override
-    public void onDtmfDigit(OnDtmfDigitParam prm) {
-        Log.d(TAG, "onDtmfDigit");
+                if (mediaInfo.getType() == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
+                        media != null &&
+                        mediaInfo.getStatus() == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
+                    AudioMedia audioMedia = AudioMedia.typecastFromMedia(media);
 
-        super.onDtmfDigit(prm);
-    }
+                    // connect the call audio media to sound device
+                    AudDevManager mgr = account.getService().getAudDevManager();
+                    audioMedia.adjustRxLevel((float) 1.0);
+                    audioMedia.adjustTxLevel((float) 1.0);
+                    audioMedia.startTransmit(mgr.getPlaybackDevMedia());
+                    mgr.getCaptureDevMedia().startTransmit(audioMedia);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start transmit to playback device", e);
+        }
 
-    @Override
-    public void onCallTransferRequest(OnCallTransferRequestParam prm) {
-        Log.d(TAG, "onCallTransferRequest");
-
-        super.onCallTransferRequest(prm);
-    }
-
-    @Override
-    public void onCallTransferStatus(OnCallTransferStatusParam prm) {
-        Log.d(TAG, "onCallTransferStatus");
-
-        super.onCallTransferStatus(prm);
-    }
-
-    @Override
-    public void onCallReplaceRequest(OnCallReplaceRequestParam prm) {
-        Log.d(TAG, "onCallReplaceRequest");
-
-        super.onCallReplaceRequest(prm);
-    }
-
-    @Override
-    public void onCallReplaced(OnCallReplacedParam prm) {
-        Log.d(TAG, "onCallReplaced");
-
-        super.onCallReplaced(prm);
-    }
-
-    @Override
-    public void onCallRxOffer(OnCallRxOfferParam prm) {
-        Log.d(TAG, "onCallRxOffer");
-
-        super.onCallRxOffer(prm);
-    }
-
-    @Override
-    public pjsip_redirect_op onCallRedirected(OnCallRedirectedParam prm) {
-        Log.d(TAG, "onCallRedirected");
-
-        return super.onCallRedirected(prm);
-    }
-
-    @Override
-    public void onCallMediaTransportState(OnCallMediaTransportStateParam prm) {
-        Log.d(TAG, "onCallMediaTransportState");
-
-        super.onCallMediaTransportState(prm);
-    }
-
-    @Override
-    public void onCallMediaEvent(OnCallMediaEventParam prm) {
-        Log.d(TAG, "onCallMediaEvent");
-
-        super.onCallMediaEvent(prm);
-    }
-
-    @Override
-    public void onCreateMediaTransport(OnCreateMediaTransportParam prm) {
-        Log.d(TAG, "onCreateMediaTransport");
-
-        super.onCreateMediaTransport(prm);
+        // Emmit changes
+        getService().emmitCallUpdated(this);
     }
 
     public JSONObject toJson() {
         JSONObject json = new JSONObject();
 
         try {
+            CallInfo info = getInfo();
+
+            // -----
+            AudioManager audioManager = (AudioManager) getService().getBaseContext().getSystemService(Context.AUDIO_SERVICE);
+            boolean speaker = audioManager.isSpeakerphoneOn();
+
+            // -----
             int connectDuration = -1;
 
-            if (getInfo().getState() == pjsip_inv_state.PJSIP_INV_STATE_CONFIRMED ||
-                getInfo().getState() == pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED) {
-                connectDuration = getInfo().getConnectDuration().getSec();
+            if (info.getState() == pjsip_inv_state.PJSIP_INV_STATE_CONFIRMED ||
+                info.getState() == pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED) {
+                connectDuration = info.getConnectDuration().getSec();
             }
 
+            // -----
             json.put("id", getId());
-            json.put("callId", getInfo().getCallIdString());
+            json.put("callId", info.getCallIdString());
             json.put("accountId", account.getId());
 
             // -----
-            json.put("localContact", getInfo().getLocalContact());
-            json.put("localUri", getInfo().getLocalUri());
-            json.put("remoteContact", getInfo().getRemoteContact());
-            json.put("remoteUri", getInfo().getRemoteUri());
+            json.put("localContact", info.getLocalContact());
+            json.put("localUri", info.getLocalUri());
+            json.put("remoteContact", info.getRemoteContact());
+            json.put("remoteUri", info.getRemoteUri());
 
             // -----
-            json.put("state", getInfo().getState());
-            json.put("stateText", getInfo().getStateText());
+            json.put("state", info.getState());
+            json.put("stateText", info.getStateText());
             json.put("connectDuration", connectDuration);
-            json.put("totalDuration", getInfo().getTotalDuration().getSec());
+            json.put("totalDuration", info.getTotalDuration().getSec());
+            json.put("held", isHeld);
+            json.put("muted", isMuted);
+            json.put("speaker", speaker);
 
-            /**
             try {
-                info.put("lastStatusCode", getInfo().getLastStatusCode());
+                json.put("lastStatusCode", info.getLastStatusCode());
             } catch (Exception e) {
-                info.put("lastStatusCode", null);
+                json.put("lastStatusCode", null);
             }
-            info.put("lastReason", getInfo().getLastReason());
-            */
+
+            json.put("lastReason", info.getLastReason());
 
             // -----
-            json.put("remoteOfferer", getInfo().getRemOfferer());
-            json.put("remoteAudioCount", getInfo().getRemAudioCount());
-            json.put("remoteVideoCount", getInfo().getRemVideoCount());
+            json.put("remoteOfferer", info.getRemOfferer());
+            json.put("remoteAudioCount", info.getRemAudioCount());
+            json.put("remoteVideoCount", info.getRemVideoCount());
 
             // -----
-            json.put("audioCount", getInfo().getSetting().getAudioCount());
-            json.put("videoCount", getInfo().getSetting().getVideoCount());
-
-            // ... getMedia
-            // ... ... getIndex
-            // ... ... getType
-            // ... ... getDir
-            // ... ... getStatus
-            // ... ... getAudioConfSlot
-            // ... ... getVideoIncomingWindowId
-            // ... ... getVideoCapDev
-            // ... getProvMedia
-            // ... ... getIndex
-            // ... ... getType
-            // ... ... getDir
-            // ... ... getStatus
-            // ... ... getAudioConfSlot
-            // ... ... getVideoIncomingWindowId
-            // ... ... getVideoCapDev
-
-            // getMedia
-            // getMedTransportInfo
-
-            // getStreamInfo (med_idx)
-            // ... getType
-            // ... getProto
-            // ... getDir
-            // ... getRemoteRtpAddress
-            // ... getRemoteRtcpAddress
-            // ... getTxPt
-            // ... getRxPt
-            // ... getCodecName
-            // ... getCodecClockRate
-
-            // getStreamStat (med_idx)
-            // ... getRtcp
-            // ... getJbuf
+            json.put("audioCount", info.getSetting().getAudioCount());
+            json.put("videoCount", info.getSetting().getVideoCount());
 
             return json;
         } catch (Exception e) {

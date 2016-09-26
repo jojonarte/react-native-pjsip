@@ -21,6 +21,8 @@ export default class Endpoint extends EventEmitter {
         DeviceEventEmitter.addListener('pjSipCallReceived', this._onCallReceived.bind(this));
         DeviceEventEmitter.addListener('pjSipCallChanged', this._onCallChanged.bind(this));
         DeviceEventEmitter.addListener('pjSipCallTerminated', this._onCallTerminated.bind(this));
+        DeviceEventEmitter.addListener('pjSipCallScreenLocked', this._onCallScreenLocked.bind(this));
+        DeviceEventEmitter.addListener('pjSipConnectivityChanged', this._onConnectivityChanged.bind(this));
     }
 
     /**
@@ -29,9 +31,9 @@ export default class Endpoint extends EventEmitter {
      *
      * @returns {Promise}
      */
-    start() {
+    start(configuration) {
         return new Promise(function(resolve, reject) {
-            NativeModules.PjSipModule.start((successful, data) => {
+            NativeModules.PjSipModule.start(configuration, (successful, data) => {
                 if (successful) {
                     let accounts = [];
                     let calls = [];
@@ -48,10 +50,51 @@ export default class Endpoint extends EventEmitter {
                         }
                     }
 
+                    let extra = {};
+
+                    for (let key in data) {
+                        if (data.hasOwnProperty(key) && key != "accounts" && key != "calls") {
+                            extra[key] = data[key];
+                        }
+                    }
+
                     resolve({
                         accounts,
-                        calls
+                        calls,
+                        ...extra
                     });
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
+     * @param configuration
+     * @returns {Promise}
+     */
+    changeNetworkConfiguration(configuration) {
+        return new Promise(function(resolve, reject) {
+            NativeModules.PjSipModule.changeNetworkConfiguration(configuration, (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
+     * @param configuration
+     * @returns {Promise}
+     */
+    changeServiceConfiguration(configuration) {
+        return new Promise(function(resolve, reject) {
+            NativeModules.PjSipModule.changeServiceConfiguration(configuration, (successful, data) => {
+                if (successful) {
+                    resolve(data);
                 } else {
                     reject(data);
                 }
@@ -124,20 +167,7 @@ export default class Endpoint extends EventEmitter {
      * @param destination {String} Destination SIP URI.
      */
     makeCall(account, destination) {
-        if (!destination.startsWith("sip:")) {
-            let realm = account.getRegServer();
-
-            if (!realm) {
-                realm = account.getDomain();
-                let s = realm.indexOf(":");
-
-                if (s > 0) {
-                    realm = realm.substr(0, s + 1);
-                }
-            }
-
-            destination = "sip:" + destination + "@" + realm;
-        }
+        destination = this._normalize(account, destination);
 
         return new Promise(function(resolve, reject) {
             NativeModules.PjSipModule.makeCall(account.getId(), destination, (successful, data) => {
@@ -188,6 +218,24 @@ export default class Endpoint extends EventEmitter {
     }
 
     /**
+     * Hangup call by using Decline (603) method.
+     *
+     * @param call {Call} Call instance
+     * @returns {Promise}
+     */
+    declineCall(call) {
+        return new Promise((resolve, reject) => {
+            NativeModules.PjSipModule.declineCall(call.getId(), (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
      * Put the specified call on hold. This will send re-INVITE with the appropriate SDP to inform remote that the call is being put on hold.
      *
      * @param call {Call} Call instance
@@ -224,16 +272,127 @@ export default class Endpoint extends EventEmitter {
     }
 
     /**
+     * @param call {Call} Call instance
+     * @returns {Promise}
+     */
+    muteCall(call) {
+        return new Promise((resolve, reject) => {
+            NativeModules.PjSipModule.muteCall(call.getId(), (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
+     * @param call {Call} Call instance
+     * @returns {Promise}
+     */
+    unMuteCall(call) {
+        return new Promise((resolve, reject) => {
+            NativeModules.PjSipModule.unMuteCall(call.getId(), (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
+     * @param call {Call} Call instance
+     * @returns {Promise}
+     */
+    useSpeaker(call) {
+        return new Promise((resolve, reject) => {
+            NativeModules.PjSipModule.useSpeaker(call.getId(), (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
+     * @param call {Call} Call instance
+     * @returns {Promise}
+     */
+    useEarpiece(call) {
+        return new Promise((resolve, reject) => {
+            NativeModules.PjSipModule.useEarpiece(call.getId(), (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
      * Initiate call transfer to the specified address.
      * This function will send REFER request to instruct remote call party to initiate a new INVITE session to the specified destination/target.
      *
+     * @param account {Account} Account associated with call.
      * @param call {Call} The call to be transferred.
      * @param destination URI of new target to be contacted. The URI may be in name address or addr-spec format.
      * @returns {Promise}
      */
-    xferCall(call, destination) {
+    xferCall(account, call, destination) {
+        destination = this._normalize(account, destination);
+
         return new Promise((resolve, reject) => {
             NativeModules.PjSipModule.xferCall(call.getId(), destination, (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
+     * Initiate attended call transfer.
+     * This function will send REFER request to instruct remote call party to initiate new INVITE session to the URL of destCall.
+     * The party at destCall then should "replace" the call with us with the new call from the REFER recipient.
+     *
+     * @param call {Call} The call to be transferred.
+     * @param destCall {Call} The call to be transferred.
+     * @returns {Promise}
+     */
+    xferReplacesCall(call, destCall) {
+        return new Promise((resolve, reject) => {
+            NativeModules.PjSipModule.xferReplacesCall(call.getId(), destCall.getId(), (successful, data) => {
+                if (successful) {
+                    resolve(data);
+                } else {
+                    reject(data);
+                }
+            });
+        });
+    }
+
+    /**
+     * Redirect (forward) specified call to destination.
+     * This function will send response to INVITE to instruct remote call party to redirect incoming call to the specified destination/target.
+     *
+     * @param account {Account} Account associated with call.
+     * @param call {Call} The call to be transferred.
+     * @param destination URI of new target to be contacted. The URI may be in name address or addr-spec format.
+     * @returns {Promise}
+     */
+    redirectCall(account, call, destination) {
+        destination = this._normalize(account, destination);
+
+        return new Promise((resolve, reject) => {
+            NativeModules.PjSipModule.redirectCall(call.getId(), destination, (successful, data) => {
                 if (successful) {
                     resolve(data);
                 } else {
@@ -260,6 +419,21 @@ export default class Endpoint extends EventEmitter {
                 }
             });
         });
+    }
+
+    /**
+     * @fires Endpoint#connectivity_changed
+     * @private
+     * @param data {Object}
+     */
+    _onConnectivityChanged(data) {
+        /**
+         * Fires when registration status has changed.
+         *
+         * @event Endpoint#connectivity_changed
+         * @property {Account} account
+         */
+        this.emit("connectivity_changed", new Account(data));
     }
 
     /**
@@ -324,6 +498,60 @@ export default class Endpoint extends EventEmitter {
         this.emit("call_terminated", new Call(data));
     }
 
+    /**
+     * @fires Endpoint#call_screen_locked
+     * @private
+     * @param lock bool
+     */
+    _onCallScreenLocked(lock) {
+        /**
+         * TODO
+         *
+         * @event Endpoint#call_screen_locked
+         * @property bool lock
+         */
+        this.emit("call_screen_locked", lock);
+    }
+
+    /**
+     * @fires Endpoint#connectivity_changed
+     * @private
+     * @param available bool
+     */
+    _onConnectivityChanged(available) {
+        /**
+         * @event Endpoint#connectivity_changed
+         * @property bool available True if connectivity matches current Network settings, otherwise false.
+         */
+        this.emit("connectivity_changed", available);
+    }
+
+    /**
+     * Normalize Destination URI
+     *
+     * @param account
+     * @param destination {string}
+     * @returns {string}
+     * @private
+     */
+    _normalize(account, destination) {
+        if (!destination.startsWith("sip:")) {
+            let realm = account.getRegServer();
+
+            if (!realm) {
+                realm = account.getDomain();
+                let s = realm.indexOf(":");
+
+                if (s > 0) {
+                    realm = realm.substr(0, s + 1);
+                }
+            }
+
+            destination = "sip:" + destination + "@" + realm;
+        }
+
+        return destination;
+    }
     // setUaConfig(UaConfig value)
     // setMaxCalls
     // setUserAgent
